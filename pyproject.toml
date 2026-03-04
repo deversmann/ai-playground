@@ -1,0 +1,48 @@
+[tool.poetry]
+name = "ai-chatbot"
+version = "0.1.0"
+description = "AI Chatbot Personal Assistant with provider abstraction and memory systems"
+authors = ["deversma"]
+readme = "README.md"
+packages = [{include = "chatbot", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+# FastAPI and server
+fastapi = "^0.115.0"
+uvicorn = {extras = ["standard"], version = "^0.32.0"}
+# AI Providers
+anthropic = "^0.40.0"
+# HTTP client
+httpx = "^0.28.0"
+# Configuration
+pydantic = "^2.10.0"
+pydantic-settings = "^2.6.0"
+# CLI
+rich = "^13.9.0"
+prompt-toolkit = "^3.0.48"
+# Environment
+python-dotenv = "^1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+# Testing
+pytest = "^8.3.0"
+pytest-asyncio = "^0.24.0"
+# Linting and formatting
+ruff = "^0.8.0"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
