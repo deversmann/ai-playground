@@ -15,6 +15,13 @@ A comprehensive guide to building a production-quality AI chatbot with modern Py
   - [Configuration Management](#configuration-management)
   - [Testing Strategies](#testing-strategies)
 
+- [Phase 2: Short-Term Memory](#phase-2-short-term-memory)
+  - [collections.deque - Fixed-Size Queues](#collectionsdeque---fixed-size-queues)
+  - [asyncio.Lock - Thread Safety in Async Code](#asynciolock---thread-safety-in-async-code)
+  - [Session Management](#session-management)
+  - [Prompt-Injected Memory](#prompt-injected-memory)
+  - [Orchestration Pattern](#orchestration-pattern)
+
 ---
 
 # Phase 1: Foundation
@@ -987,15 +994,614 @@ src/chatbot/
 
 ---
 
-## Next Phase: Short-Term Memory
+# Phase 2: Short-Term Memory
 
-In Phase 2, we'll add:
-- **In-memory conversation context** using deques
-- **Session management** for multiple users
-- **Token counting** to stay within limits
-- **Multi-turn conversations** with context
+In Phase 2, we transformed the chatbot from **stateless** (each message independent) to **stateful** (remembers conversation context). We implemented in-memory conversation history that enables multi-turn conversations.
 
-This will transform our stateless chatbot into one that remembers your conversation!
+## The Problem: Stateless Conversations
+
+In Phase 1, each request was completely independent:
+
+```python
+# Request 1
+You: What's the capital of France?
+AI: The capital of France is Paris.
+
+# Request 2 - AI has NO memory of previous message
+You: What's the population?
+AI: I don't know what you're referring to...  ❌
+```
+
+The AI couldn't understand "What's the population?" because it had no context.
+
+## The Solution: Conversation Memory
+
+AI models like Claude don't have built-in memory. They process what you give them in each request. The solution is to **include the full conversation history** in every API call.
+
+This is called **prompt-injected memory** - we inject the conversation context into the prompt.
+
+```python
+# Request 1
+messages = [
+    ChatMessage(role="user", content="What's the capital of France?")
+]
+# AI responds: "Paris"
+
+# Request 2 - Include full conversation history!
+messages = [
+    ChatMessage(role="user", content="What's the capital of France?"),
+    ChatMessage(role="assistant", content="The capital of France is Paris."),
+    ChatMessage(role="user", content="What's the population?")
+]
+# AI responds: "Paris has approximately 2.2 million people..."  ✅
+```
+
+The AI sees the full conversation each time, so it knows "the population" refers to Paris!
+
+---
+
+## collections.deque - Fixed-Size Queues
+
+### Why Not Use a List?
+
+You might think: "Just use a Python list to store messages!"
+
+```python
+conversation = []  # List approach
+conversation.append(msg1)
+conversation.append(msg2)
+# ... keeps growing forever ...
+```
+
+**Problems:**
+1. **Unbounded growth**: List grows forever, eventually hitting token limits
+2. **Manual management**: You have to manually remove old items
+3. **Token limits**: Claude has a 200k token context window - we need to stay within it
+
+### Enter: collections.deque
+
+A **deque** (double-ended queue) is a list-like container that can automatically maintain a fixed size.
+
+```python
+from collections import deque
+
+# Create a deque with maximum size of 3
+conversation = deque(maxlen=3)
+
+conversation.append("Message 1")  # ["Message 1"]
+conversation.append("Message 2")  # ["Message 1", "Message 2"]
+conversation.append("Message 3")  # ["Message 1", "Message 2", "Message 3"]
+conversation.append("Message 4")  # ["Message 2", "Message 3", "Message 4"]
+                                  # ↑ "Message 1" automatically removed!
+```
+
+**Key features:**
+- **FIFO (First-In-First-Out)**: Oldest items automatically dropped
+- **O(1) operations**: Appending and removing from either end is instant
+- **Fixed size**: `maxlen` parameter ensures we never exceed limit
+- **Built-in**: Part of Python's standard library
+
+### Real-World Example
+
+```python
+from collections import deque
+from chatbot.providers.models import ChatMessage
+
+class ShortTermMemory:
+    def __init__(self, max_messages: int = 50):
+        # Deque automatically removes oldest when full
+        self._messages = deque(maxlen=max_messages)
+
+    def add_message(self, message: ChatMessage) -> None:
+        """Add a message. If at capacity, oldest is auto-removed."""
+        self._messages.append(message)
+
+    def get_messages(self) -> list[ChatMessage]:
+        """Get all messages in chronological order."""
+        return list(self._messages)
+```
+
+### Why 50 Messages?
+
+We default to 50 messages (25 user + 25 assistant turns) because:
+- Average message: ~100 tokens
+- 50 messages × 100 tokens = ~5,000 tokens
+- Leaves plenty of room in Claude's 200k token window
+- Recent context is most relevant anyway
+
+---
+
+## asyncio.Lock - Thread Safety in Async Code
+
+### The Problem: Race Conditions in Async Code
+
+Even though async/await runs in a **single thread**, it can still have race conditions at `await` points.
+
+```python
+# Two requests arrive simultaneously for the same session
+# Without locking:
+
+# Request 1 starts
+messages = get_messages("session-123")  # Gets [msg1, msg2]
+await call_ai(messages)  # ← Pauses here (await point)
+
+# Request 2 starts while Request 1 is waiting
+messages = get_messages("session-123")  # Gets same [msg1, msg2]
+await call_ai(messages)  # ← Both see the same state!
+
+# Request 1 resumes
+add_message("session-123", response1)  # Adds response
+
+# Request 2 resumes
+add_message("session-123", response2)  # Adds response
+
+# Result: Conversation order is corrupted! ❌
+```
+
+### The Solution: asyncio.Lock
+
+An **asyncio.Lock** ensures only one async task can access shared state at a time.
+
+```python
+import asyncio
+
+class MemoryManager:
+    def __init__(self):
+        self._sessions = {}
+        self._locks = {}  # One lock per session
+
+    async def add_message(self, session_id: str, message: ChatMessage):
+        # Get or create lock for this session
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+
+        # Only one task can be in this block at a time per session
+        async with self._locks[session_id]:
+            # Safe! No other task can modify this session right now
+            self._sessions[session_id].append(message)
+```
+
+### How Locks Work
+
+```python
+lock = asyncio.Lock()
+
+# Task 1
+async with lock:
+    # Task 1 holds the lock
+    await do_something()  # Even during await, Task 1 holds lock
+
+# Task 2 (arrives while Task 1 is in the block)
+async with lock:  # ← Waits here until Task 1 releases the lock
+    await do_something_else()
+```
+
+**Key points:**
+- **Mutual exclusion**: Only one task can hold the lock at a time
+- **Survives await**: Lock held even when awaiting
+- **Automatic release**: `async with` ensures lock is released
+- **Per-session locking**: Different sessions can run in parallel!
+
+### Why Per-Session Locks?
+
+```python
+# Dictionary of locks - one per session
+self._locks = {
+    "session-1": asyncio.Lock(),
+    "session-2": asyncio.Lock(),
+    "session-3": asyncio.Lock(),
+}
+
+# Multiple sessions can run in parallel ✅
+# Same session is serialized ✅
+```
+
+This allows:
+- User A and User B can chat simultaneously (different sessions)
+- User A's two rapid requests are processed in order (same session)
+
+---
+
+## Session Management
+
+### What is a Session?
+
+A **session** is a unique conversation thread. Each session has:
+- A unique identifier (`session_id`)
+- Its own conversation history
+- Independent context from other sessions
+
+### Why Session Management?
+
+Without sessions, all users would share one conversation:
+
+```python
+# Without sessions - everyone shares history ❌
+User A: My name is Alice
+AI: Hello Alice!
+
+User B: What's my name?
+AI: Your name is Alice!  ← Wrong! That was User A!
+```
+
+With sessions, each conversation is isolated:
+
+```python
+# With sessions - separate conversations ✅
+# Session: "user-alice-123"
+User A: My name is Alice
+AI: Hello Alice!
+
+# Session: "user-bob-456"
+User B: What's my name?
+AI: I don't know your name yet!  ← Correct!
+```
+
+### MemoryManager Architecture
+
+```python
+class MemoryManager:
+    def __init__(self):
+        # Dictionary: session_id → ShortTermMemory
+        self._sessions = {
+            "user-123-session-1": ShortTermMemory(),  # Alice's conversation
+            "user-456-session-2": ShortTermMemory(),  # Bob's conversation
+        }
+
+        # Dictionary: session_id → asyncio.Lock
+        self._locks = {
+            "user-123-session-1": asyncio.Lock(),
+            "user-456-session-2": asyncio.Lock(),
+        }
+```
+
+### Session Lifecycle
+
+```python
+# Session creation (lazy - created on first message)
+await memory_manager.add_message("new-session", msg)
+# MemoryManager creates the session automatically
+
+# Active usage
+messages = await memory_manager.get_messages("new-session")
+stats = await memory_manager.get_session_stats("new-session")
+
+# Clear history (session remains)
+await memory_manager.clear_session("new-session")
+# Session exists but has no messages
+
+# Delete completely (session removed)
+await memory_manager.delete_session("new-session")
+# Session no longer exists
+```
+
+### Session ID Strategies
+
+**Option 1: User-scoped (one session per user)**
+```python
+session_id = f"user-{user_id}"
+# All conversations for a user in one session
+```
+
+**Option 2: Conversation-scoped (multiple sessions per user)**
+```python
+session_id = f"user-{user_id}-conv-{uuid.uuid4()}"
+# Each conversation is separate
+# User can have multiple parallel conversations
+```
+
+**Option 3: Client-generated (our approach)**
+```python
+import uuid
+session_id = str(uuid.uuid4())
+# Client generates unique ID
+# Simple and stateless
+```
+
+---
+
+## Prompt-Injected Memory
+
+### How AI "Memory" Actually Works
+
+AI models like Claude are **stateless**. They don't remember previous conversations. Each API call is independent.
+
+So how do we make them "remember"? We **include the conversation history in every request**.
+
+### The Anatomy of a Request
+
+```python
+# First message
+request_1 = {
+    "messages": [
+        {"role": "user", "content": "My name is Alex"}
+    ]
+}
+response_1 = "Nice to meet you, Alex!"
+
+# Second message - Include FULL conversation history
+request_2 = {
+    "messages": [
+        {"role": "user", "content": "My name is Alex"},
+        {"role": "assistant", "content": "Nice to meet you, Alex!"},
+        {"role": "user", "content": "What's my name?"}
+    ]
+}
+response_2 = "Your name is Alex!"
+# ↑ AI knows because we sent the full conversation!
+```
+
+### Context Window Limits
+
+Claude Sonnet has a **200,000 token** context window. That's roughly:
+- ~150,000 words
+- ~750 pages of text
+- ~100-200 conversation turns
+
+Our deque limit of 50 messages (~5,000 tokens) is conservative.
+
+### Token Estimation
+
+We use a simple approximation: **~4 characters per token**
+
+```python
+def estimate_tokens(self) -> int:
+    """Estimate total tokens in conversation."""
+    total_chars = sum(len(msg.content) for msg in self._messages)
+    return total_chars // 4
+```
+
+**Why approximate?**
+- Real tokenization requires the model's tokenizer
+- Our approximation is good enough for context window management
+- Easy to calculate, no external dependencies
+
+For production, you'd use:
+- Anthropic: `anthropic.count_tokens()`
+- OpenAI: `tiktoken` library
+
+### System Prompts
+
+System prompts are **instructions** for the AI, not conversation:
+
+```python
+messages = [
+    {"role": "system", "content": "You are a helpful Python tutor."},
+    {"role": "user", "content": "What is a list?"},
+    {"role": "assistant", "content": "A list is..."},
+    {"role": "user", "content": "How do I append?"}
+]
+```
+
+**Important**: System prompts are **not stored** in conversation history. They're added with each request but don't count as conversation messages.
+
+---
+
+## Orchestration Pattern
+
+### What is Orchestration?
+
+An **orchestrator** is a service that coordinates multiple subsystems to accomplish a task. It's the "conductor" that tells other components what to do.
+
+### The Service Layer
+
+```
+┌─────────────────────────────────────┐
+│         API Layer                   │  ← Handles HTTP requests
+│  (Routes, request/response models)  │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│      ConversationService            │  ← Orchestration Layer
+│   (Business logic coordinator)      │
+└──────┬──────────────────────┬───────┘
+       │                      │
+       ▼                      ▼
+┌─────────────┐      ┌─────────────────┐
+│   Memory    │      │   AI Provider   │  ← Infrastructure
+│   Manager   │      │   (Claude API)  │
+└─────────────┘      └─────────────────┘
+```
+
+### ConversationService - The Orchestrator
+
+```python
+class ConversationService:
+    """Orchestrates conversation flow."""
+
+    def __init__(self, provider: AIProvider, memory_manager: MemoryManager):
+        self.provider = provider
+        self.memory_manager = memory_manager
+
+    async def send_message(
+        self,
+        session_id: str,
+        user_message: str
+    ) -> ChatResponse:
+        """
+        Orchestrate the full conversation flow:
+        1. Get conversation history
+        2. Add user message
+        3. Call AI provider with full context
+        4. Save AI response
+        5. Return response
+        """
+        # 1. Get history
+        history = await self.memory_manager.get_messages(session_id)
+
+        # 2. Build full message list
+        messages = history + [ChatMessage(role="user", content=user_message)]
+
+        # 3. Call AI
+        ai_response = await self.provider.chat(messages)
+
+        # 4. Save both messages
+        await self.memory_manager.add_message(
+            session_id,
+            ChatMessage(role="user", content=user_message)
+        )
+        await self.memory_manager.add_message(
+            session_id,
+            ChatMessage(role="assistant", content=ai_response.content)
+        )
+
+        # 5. Return
+        return ai_response
+```
+
+### Benefits of Orchestration Layer
+
+**1. Separation of Concerns**
+- API layer: HTTP-specific logic
+- Service layer: Business logic
+- Infrastructure: Memory, AI providers
+
+**2. Testability**
+```python
+# Easy to test with mocks
+mock_provider = MockProvider()
+mock_memory = MemoryManager()
+service = ConversationService(mock_provider, mock_memory)
+
+# Test business logic without HTTP or real APIs
+response = await service.send_message("session", "Hello")
+```
+
+**3. Reusability**
+```python
+# Same service used by:
+# - REST API
+# - GraphQL API
+# - CLI client
+# - Background jobs
+# - Anything that needs chat functionality
+```
+
+**4. Single Responsibility**
+Each component has one job:
+- `ShortTermMemory`: Manage message queue
+- `MemoryManager`: Manage multiple sessions
+- `ConversationService`: Orchestrate the flow
+- API routes: Handle HTTP
+
+### Dependency Injection in FastAPI
+
+```python
+# dependencies.py
+@lru_cache()
+def get_conversation_service() -> ConversationService:
+    provider = get_ai_provider()
+    memory = get_memory_manager()
+    return ConversationService(provider, memory)
+
+# routes/chat.py
+@app.post("/chat/send")
+async def send_message(
+    request: ChatRequest,
+    service: ConversationService = Depends(get_conversation_service)
+):
+    # Service is automatically injected!
+    response = await service.send_message(
+        session_id=request.session_id,
+        user_message=request.message
+    )
+    return response
+```
+
+**Benefits:**
+- Routes don't know how services are created
+- Easy to swap implementations
+- Singleton pattern via `@lru_cache()`
+- Testing: override dependencies
+
+---
+
+## Key Takeaways - Phase 2
+
+### Concepts Mastered
+
+**1. collections.deque**
+- Fixed-size FIFO queues
+- Automatic old-item removal
+- O(1) append/remove
+- Perfect for conversation history
+
+**2. asyncio.Lock**
+- Thread safety in async code
+- Mutual exclusion
+- Per-resource locking
+- Automatic cleanup with `async with`
+
+**3. Session Management**
+- Isolate conversations
+- Per-session state
+- Lazy creation
+- CRUD operations
+
+**4. Prompt-Injected Memory**
+- AI models are stateless
+- Include full history in each request
+- Context window management
+- Token estimation
+
+**5. Orchestration Pattern**
+- Service layer for business logic
+- Coordinate multiple subsystems
+- Separation of concerns
+- Dependency injection
+
+### Architecture Patterns
+
+**Before (Phase 1):**
+```
+API Route → AI Provider
+```
+
+**After (Phase 2):**
+```
+API Route → ConversationService → Memory Manager → AI Provider
+                                 ↓
+                         ShortTermMemory (deque)
+```
+
+### Python Features Used
+
+- `collections.deque` - Fixed-size queues
+- `asyncio.Lock` - Async synchronization
+- `async/await` - Non-blocking I/O
+- Type hints - Static type checking
+- Dependency injection - Clean architecture
+- Singleton pattern - `@lru_cache()`
+
+### Testing Strategy
+
+- **Unit tests**: Individual components in isolation
+- **Integration tests**: Components working together
+- **Mock providers**: Test without real API calls
+- **Session isolation**: Test concurrent access
+
+### What We Built
+
+1. **ShortTermMemory** - Single conversation queue
+2. **MemoryManager** - Multi-session coordinator
+3. **ConversationService** - Orchestration layer
+4. **Updated API** - Uses service pattern
+5. **Enhanced CLI** - `/new` command, memory awareness
+6. **Comprehensive tests** - 48 tests passing
+
+---
+
+## Next Phase: Persistent Storage
+
+In Phase 3, we'll add **database persistence**:
+- SQLAlchemy 2.0 async ORM
+- SQLite for local development
+- Repository pattern for data access
+- Save/retrieve full conversation history
+- Conversations survive server restarts
+
+Phase 2 gave us **short-term memory in RAM**. Phase 3 will make it **persistent on disk**!
 
 ---
 

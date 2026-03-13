@@ -18,8 +18,8 @@ Example:
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from chatbot.providers import AIProvider, ChatMessage
-from ..dependencies import get_ai_provider
+from chatbot.core import ConversationService
+from ..dependencies import get_conversation_service
 from ..models import ChatRequest, ChatResponse, TokenUsageResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -56,18 +56,18 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 )
 async def send_message(
     request: ChatRequest,
-    provider: AIProvider = Depends(get_ai_provider),
+    service: ConversationService = Depends(get_conversation_service),
 ) -> ChatResponse:
     """
-    Send a message to the AI and get a response.
+    Send a message to the AI and get a response with conversation context.
 
-    Phase 1: This is a stateless endpoint. Each message is independent
-    with no conversation context. The session_id is accepted but not
-    yet used - it will be used in Phase 2 for conversation history.
+    Phase 2: This endpoint now maintains conversation history! Each message
+    is sent with the full conversation context, enabling multi-turn
+    conversations where the AI remembers what was said before.
 
     Args:
         request: Chat request with message and session details
-        provider: AI provider instance (injected by FastAPI)
+        service: Conversation service (injected by FastAPI)
 
     Returns:
         ChatResponse with the AI's reply and metadata
@@ -76,59 +76,62 @@ async def send_message(
         HTTPException: 500 error if AI provider fails
 
     Example:
-        Request:
+        Request 1:
             POST /chat/send
             {
-                "message": "What is async/await in Python?",
+                "message": "What's the capital of France?",
                 "session_id": "user-123-session-1",
-                "temperature": 0.7,
-                "max_tokens": 500
+                "temperature": 0.7
             }
 
-        Response:
-            200 OK
+        Response 1:
             {
-                "response": "Async/await is a Python feature for...",
-                "model": "claude-3-5-sonnet-20241022",
+                "response": "The capital of France is Paris.",
+                "model": "claude-sonnet-4-5",
                 "session_id": "user-123-session-1",
-                "usage": {
-                    "input_tokens": 15,
-                    "output_tokens": 120,
-                    "total_tokens": 135
-                }
+                "usage": {...}
             }
 
-    Note (Phase 2):
-        In Phase 2, we'll retrieve conversation history for the session_id
-        and include it in the context:
+        Request 2 (same session):
+            POST /chat/send
+            {
+                "message": "What's the population?",
+                "session_id": "user-123-session-1"
+            }
 
-        # Get conversation history
-        context = await memory.get_messages(request.session_id)
-        messages = context + [ChatMessage(role="user", content=request.message)]
+        Response 2:
+            {
+                "response": "Paris has approximately 2.2 million people...",
+                ...
+            }
+
+        Notice the AI knows "What's the population?" refers to Paris!
+
+    How It Works (Phase 2):
+        1. Service retrieves conversation history for session_id
+        2. User's new message is added to context
+        3. Full conversation sent to AI provider
+        4. AI's response includes context from previous messages
+        5. Both user message and AI response saved to memory
 
     Note (Phase 3):
-        In Phase 3, we'll save the conversation to the database:
+        In Phase 3, we'll also save to database for persistence:
+        - Conversations survive server restarts
+        - Can retrieve historical conversations
+        - Can analyze conversation patterns
 
-        # Save to database
-        await conversation_repo.save_message(
-            session_id=request.session_id,
-            role="user",
-            content=request.message
-        )
+    Note (Phase 4):
+        In Phase 4, we'll add semantic search:
+        - Find relevant past conversations
+        - Inject related context from other sessions
+        - Smart context management for better responses
     """
     try:
-        # Phase 1: Simple request/response - no conversation history
-        # Just send the user's message directly to the AI
-        messages = [
-            ChatMessage(
-                role="user",
-                content=request.message,
-            )
-        ]
-
-        # Call the AI provider
-        ai_response = await provider.chat(
-            messages=messages,
+        # Phase 2: Conversation service handles everything!
+        # It manages history, calls provider, and stores messages
+        ai_response = await service.send_message(
+            session_id=request.session_id,
+            user_message=request.message,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
         )

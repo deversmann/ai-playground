@@ -8,8 +8,8 @@ This file provides context for continuing this project in future Claude Code ses
 
 **Name**: AI Chatbot Personal Assistant
 **Purpose**: Learning-focused project to build a production-quality AI chatbot from scratch
-**Current Phase**: Phase 1 Complete ✅
-**Next Phase**: Phase 2 - Short-Term Memory
+**Current Phase**: Phase 2 Complete ✅
+**Next Phase**: Phase 3 - Persistent Storage
 
 ### User Background
 - Has coding background
@@ -83,7 +83,7 @@ ai-playground/
 
 ---
 
-## Current State (Phase 1 Complete)
+## Current State (Phase 2 Complete)
 
 ### What Works ✅
 
@@ -104,28 +104,40 @@ ai-playground/
 3. **CLI Client**
    - Beautiful Rich terminal UI
    - Markdown rendering for AI responses
-   - Commands: `/help`, `/stats`, `/clear`, `/quit`
+   - Commands: `/help`, `/stats`, `/clear`, `/quit`, `/new`
    - Token usage tracking
    - Command history (Up/Down arrows)
+   - Session management with `/new` command
 
 4. **Configuration**
    - Type-safe Pydantic Settings
    - `.env` file loading
    - Validation with helpful errors
 
-5. **Testing**
-   - Unit tests for models (14 tests passing)
-   - Integration tests for API
-   - Mock provider fixtures
+5. **Memory System (Phase 2)** ✨ NEW
+   - **ShortTermMemory**: Deque-based message queue (max 50 messages)
+   - **MemoryManager**: Thread-safe multi-session coordinator
+   - **ConversationService**: Orchestration layer for chat flow
+   - Per-session `asyncio.Lock` for thread safety
+   - Token estimation for context window management
+   - Lazy session creation and CRUD operations
+
+6. **Testing**
+   - **48 tests passing** ✅
+   - Unit tests for models (14 tests)
+   - Unit tests for memory system (19 tests)
+   - Integration tests for conversation service (11 tests)
+   - Integration tests for API (4 tests)
+   - Mock providers for testing without API calls
    - pytest with async support
 
 ### Known Issues / Technical Debt
 
-1. **Integration Test**: One test fails due to dependency mocking complexity (not critical)
-2. **Deprecation Warnings**:
+1. **Deprecation Warnings**:
    - Pydantic `Config` class (should migrate to `ConfigDict`)
    - FastAPI `on_event` (should migrate to lifespan handlers)
-3. **Model Name**: Currently using `claude-sonnet-4-5` (works with current API key)
+2. **Model Name**: Currently using `claude-sonnet-4-5` (works with current API key)
+3. **Memory Persistence**: Phase 2 memory is in-RAM only (lost on restart) - Phase 3 will add database
 
 ### Environment Configuration
 
@@ -177,19 +189,29 @@ poetry run pytest -v
 - Simple CLI client with Rich
 - Testing framework
 
-### 🔜 Phase 2: Short-Term Memory (NEXT)
+### ✅ Phase 2: Short-Term Memory (COMPLETE)
 - In-memory conversation context using `collections.deque`
 - Session management for multiple conversations
 - Token counting to stay within context windows
 - Multi-turn conversations (Claude remembers context)
 - `asyncio.Lock` for thread-safe session storage
+- ConversationService orchestration layer
+- Enhanced CLI with `/new` command
 
-**Key Files to Create**:
-- `src/chatbot/memory/short_term.py` - Deque-based memory
-- `src/chatbot/memory/manager.py` - Memory orchestration
-- `src/chatbot/core/conversation.py` - Conversation service
+**Key Files Created**:
+- `src/chatbot/memory/short_term.py` - ShortTermMemory class with deque
+- `src/chatbot/memory/manager.py` - MemoryManager with per-session locking
+- `src/chatbot/core/conversation.py` - ConversationService orchestrator
+- `tests/unit/test_memory.py` - Unit tests for memory components (19 tests)
+- `tests/integration/test_conversation.py` - Integration tests (11 tests)
 
-### Phase 3: Persistent Storage
+**What Changed**:
+- API route now uses `ConversationService` instead of direct `AIProvider`
+- Dependency injection updated with `get_conversation_service()`
+- CLI enhanced with conversation memory awareness
+- All 48 tests passing ✅
+
+### 🔜 Phase 3: Persistent Storage (NEXT)
 - SQLAlchemy 2.0 async ORM
 - SQLite database (local development)
 - Repository pattern for data access
@@ -215,6 +237,40 @@ poetry run pytest -v
 - Cost tracking and monitoring
 - Web UI (optional)
 - Rate limiting with semaphores
+
+---
+
+## Phase 3 Preview: Persistent Storage
+
+### What We'll Build
+
+In Phase 3, we'll make conversations survive server restarts by adding database persistence.
+
+**Key Components to Create:**
+- `src/chatbot/storage/models.py` - SQLAlchemy ORM models
+- `src/chatbot/storage/repositories/conversation.py` - Repository pattern
+- `src/chatbot/storage/database.py` - Database connection management
+- Database migrations with Alembic
+
+**Concepts to Learn:**
+- SQLAlchemy 2.0 async ORM
+- Repository pattern for data access
+- Database migrations
+- Async database sessions
+- SQLite for development, PostgreSQL-ready
+
+**Architecture Changes:**
+```
+Current: ConversationService → MemoryManager → ShortTermMemory (RAM)
+
+Phase 3: ConversationService → MemoryManager → ShortTermMemory (RAM)
+                                              ↓
+                                      ConversationRepository → Database (Disk)
+```
+
+Memory becomes **two-tier**:
+1. **ShortTermMemory**: Fast in-RAM cache for recent messages
+2. **Database**: Permanent storage for all history
 
 ---
 
@@ -308,14 +364,20 @@ poetry run pytest -v
 
 ## Questions to Ask When Resuming
 
-If starting Phase 2:
-1. "Ready to start Phase 2 (Short-Term Memory)?"
-2. "Any questions about Phase 1 concepts before we continue?"
-3. "Would you like me to explain deque-based memory before we implement?"
+If starting Phase 3:
+1. "Ready to start Phase 3 (Persistent Storage)?"
+2. "Any questions about Phase 2 concepts before we continue?"
+3. "Would you like me to explain SQLAlchemy async patterns before we implement?"
 
-If user asks to modify Phase 1:
+If user asks to modify Phase 1 or Phase 2:
 1. "What would you like to change or improve?"
 2. "Any concepts from TEXTBOOK.md you'd like me to clarify?"
+
+If user wants to test Phase 2:
+1. "Start API: `poetry run uvicorn chatbot.main:app --reload`"
+2. "Start CLI: `poetry run python -m cli.main`"
+3. "Try a multi-turn conversation to see memory in action!"
+4. "Use `/new` to start fresh, `/stats` to see token usage"
 
 ---
 
@@ -328,4 +390,4 @@ If user asks to modify Phase 1:
 
 ---
 
-*Last Updated: Phase 1 Complete - 2026-03-04*
+*Last Updated: Phase 2 Complete - 2026-03-13*

@@ -64,10 +64,18 @@ ai-chatbot/
 - ✅ Testing framework with pytest
 - ✅ Type-safe configuration with Pydantic Settings
 
-### Phase 2: Short-Term Memory
-- In-memory conversation context
-- Session management
-- Multi-turn conversations
+### ✅ Phase 2: Short-Term Memory (COMPLETE)
+- ✅ In-memory conversation context using `collections.deque`
+- ✅ Thread-safe session management with `asyncio.Lock`
+- ✅ Multi-turn conversations with context
+- ✅ ConversationService orchestration layer
+- ✅ Token counting and context window management
+- ✅ Enhanced CLI with `/new` command
+
+### Phase 3: Persistent Storage
+- SQLAlchemy ORM with SQLite
+- Save/retrieve conversation history
+- Repository pattern
 
 ### Phase 3: Persistent Storage
 - SQLAlchemy ORM with SQLite
@@ -175,8 +183,9 @@ All configuration is managed through environment variables (`.env` file):
   - Phase roadmap
   - Common tasks and patterns
 
-### Key Concepts Covered (Phase 1)
+### Key Concepts Covered
 
+**Phase 1: Foundation**
 - **Python Protocols**: Structural typing without inheritance
 - **Async/await**: Non-blocking I/O for performance
 - **FastAPI**: Modern async web framework with auto-docs
@@ -184,6 +193,14 @@ All configuration is managed through environment variables (`.env` file):
 - **Provider Abstraction**: Swappable AI providers (Anthropic ↔ OpenAI ↔ Ollama)
 - **Type Safety**: Full type hints with Pydantic validation
 - **Configuration Management**: Type-safe settings from environment variables
+
+**Phase 2: Short-Term Memory**
+- **collections.deque**: Fixed-size FIFO queues for conversation history
+- **asyncio.Lock**: Thread-safe async operations
+- **Session Management**: Multi-user conversation isolation
+- **Prompt-Injected Memory**: Including context in AI requests
+- **Orchestration Pattern**: Service layer for business logic
+- **Token Estimation**: Context window management
 
 ## Development
 

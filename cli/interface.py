@@ -150,9 +150,13 @@ class ChatInterface:
 Welcome to the AI Chatbot! This is a learning project demonstrating
 modern Python architecture with FastAPI, async/await, and provider abstraction.
 
+**Phase 2: Now with conversation memory!** The AI remembers your conversation
+and maintains context across multiple messages.
+
 ## Commands
 - `/help` - Show help message
 - `/stats` - Show conversation statistics
+- `/new` - Start a new conversation
 - `/clear` - Clear screen
 - `/quit` or `/exit` - Exit the chat
 - Press Ctrl+C or Ctrl+D to exit
@@ -161,6 +165,7 @@ modern Python architecture with FastAPI, async/await, and provider abstraction.
 - Just type your message and press Enter
 - Use Up/Down arrows for command history
 - AI responses are rendered in Markdown
+- The AI remembers previous messages in this session!
 
 Let's chat!
         """
@@ -233,6 +238,7 @@ Let's chat!
         Commands:
             /help - Show help
             /stats - Show statistics
+            /new - Start new conversation
             /clear - Clear screen
             /quit, /exit - Exit chat
         """
@@ -246,6 +252,9 @@ Let's chat!
 
         elif cmd == "/stats":
             self._show_stats()
+
+        elif cmd == "/new":
+            self._start_new_conversation()
 
         elif cmd == "/clear":
             self.console.clear()
@@ -263,15 +272,33 @@ Let's chat!
 
 - `/help` - Show this help message
 - `/stats` - Show conversation statistics
+- `/new` - Start a new conversation (clears context)
 - `/clear` - Clear the screen
 - `/quit` or `/exit` - Exit the chat
 - `Ctrl+C` or `Ctrl+D` - Exit the chat
 
 ## Features
 
+- **Conversation Memory**: AI remembers your conversation context!
 - **Markdown Rendering**: AI responses are rendered with formatting
 - **Command History**: Use Up/Down arrows to navigate history
 - **Token Tracking**: See token usage for each message
+
+## Phase 2: Short-Term Memory
+
+The AI now maintains conversation context within your session. Ask follow-up
+questions and the AI will remember what you talked about!
+
+Example:
+```
+You: What's the capital of France?
+AI: The capital of France is Paris.
+
+You: What's the population?
+AI: Paris has approximately 2.2 million people...
+```
+
+Use `/new` to start a fresh conversation with no context.
 
 ## Tips
 
@@ -304,6 +331,38 @@ Let's chat!
 
         self.console.print()
         self.console.print(stats_table)
+
+    def _start_new_conversation(self):
+        """
+        Start a new conversation with a fresh session ID.
+
+        This clears the conversation context on the server side by
+        creating a new session. Local stats are also reset.
+        """
+        old_session = self.session_id
+        self.session_id = str(uuid.uuid4())
+
+        # Reset local stats
+        old_message_count = self.message_count
+        old_total_tokens = self.total_input_tokens + self.total_output_tokens
+
+        self.message_count = 0
+        self.total_input_tokens = 0
+        self.total_output_tokens = 0
+
+        # Show confirmation
+        info_panel = Panel(
+            f"[green]✓[/green] Started new conversation!\n\n"
+            f"[dim]Previous session:[/dim]\n"
+            f"  • Messages: {old_message_count}\n"
+            f"  • Tokens: {old_total_tokens}\n\n"
+            f"[dim]New session ID:[/dim]\n"
+            f"  {self.session_id}",
+            title="[bold cyan]New Conversation[/bold cyan]",
+            border_style="cyan",
+        )
+        self.console.print("\n")
+        self.console.print(info_panel)
 
     async def _confirm_quit(self) -> bool:
         """
