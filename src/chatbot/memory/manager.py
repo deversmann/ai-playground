@@ -81,6 +81,10 @@ class MemoryManager:
         # One lock per session allows parallel access to different sessions
         self._locks: Dict[str, asyncio.Lock] = {}
 
+        # Dictionary of session_id -> bool (Phase 3.5: track warm starts)
+        # True if session was loaded from database after restart
+        self._warm_started: Dict[str, bool] = {}
+
     def _get_or_create_session(self, session_id: str) -> ShortTermMemory:
         """
         Get or create a session's memory.
@@ -243,6 +247,27 @@ class MemoryManager:
                 # to avoid issues with the lock being deleted while held
             # Now safe to remove the lock
             self._locks.pop(session_id, None)
+            # Also remove warm_started flag
+            self._warm_started.pop(session_id, None)
+
+    async def mark_warm_started(self, session_id: str) -> None:
+        """
+        Mark a session as having been warm started from database.
+
+        Phase 3.5 feature: Track which sessions were loaded from database
+        after server restart for observability.
+
+        Args:
+            session_id: The session identifier
+
+        Example:
+            >>> manager = MemoryManager()
+            >>> await manager.mark_warm_started("session-123")
+            >>> stats = await manager.get_session_stats("session-123")
+            >>> print(stats["warm_started"])
+            True
+        """
+        self._warm_started[session_id] = True
 
     async def get_session_stats(self, session_id: str) -> dict:
         """
@@ -284,6 +309,7 @@ class MemoryManager:
                     "message_count": 0,
                     "estimated_tokens": 0,
                     "near_limit": False,
+                    "warm_started": False,  # Phase 3.5
                 }
 
             session = self._sessions[session_id]
@@ -291,6 +317,7 @@ class MemoryManager:
                 "message_count": session.get_message_count(),
                 "estimated_tokens": session.estimate_tokens(),
                 "near_limit": session.is_near_token_limit(),
+                "warm_started": self._warm_started.get(session_id, False),  # Phase 3.5
             }
 
     async def list_sessions(self) -> list[str]:

@@ -242,6 +242,49 @@ class ConversationRepository:
         # all(): Fetch all results
         return list(result.scalars().all())
 
+    async def get_recent_messages(
+        self,
+        session_id: str,
+        limit: int,
+    ) -> list[Message]:
+        """
+        Get the most recent N messages for a conversation.
+
+        Phase 3.5: Used for warm start to load recent context.
+        Unlike get_messages() which returns oldest-first with limit,
+        this returns the MOST RECENT N messages.
+
+        Args:
+            session_id: Conversation identifier
+            limit: Number of recent messages to return
+
+        Returns:
+            list[Message]: Most recent N messages in chronological order
+
+        Example:
+            >>> # Database has 100 messages
+            >>> recent = await repo.get_recent_messages("session", limit=10)
+            >>> # Returns messages 90-99 in chronological order
+        """
+        conversation = await self.get_conversation(session_id)
+
+        if conversation is None:
+            return []
+
+        # Get most recent N messages by ordering DESC and limiting
+        stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.timestamp.desc())  # Newest first
+            .limit(limit)
+        )
+
+        result = await self.session.execute(stmt)
+        messages = list(result.scalars().all())
+
+        # Reverse to get chronological order (oldest to newest)
+        return list(reversed(messages))
+
     async def get_messages_as_chat_messages(
         self, session_id: str, limit: Optional[int] = None
     ) -> list[ChatMessage]:
@@ -260,6 +303,24 @@ class ConversationRepository:
         messages = await self.get_messages(session_id, limit=limit)
 
         # Convert to ChatMessage format
+        return [ChatMessage(role=msg.role, content=msg.content) for msg in messages]
+
+    async def get_recent_messages_as_chat_messages(
+        self, session_id: str, limit: int
+    ) -> list[ChatMessage]:
+        """
+        Get the most recent N messages as ChatMessage format.
+
+        Phase 3.5: Used for warm start.
+
+        Args:
+            session_id: Conversation identifier
+            limit: Number of recent messages to return
+
+        Returns:
+            list[ChatMessage]: Most recent N messages in provider format
+        """
+        messages = await self.get_recent_messages(session_id, limit)
         return [ChatMessage(role=msg.role, content=msg.content) for msg in messages]
 
     async def count_messages(self, session_id: str) -> int:

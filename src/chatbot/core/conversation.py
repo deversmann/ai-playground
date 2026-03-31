@@ -79,6 +79,60 @@ class ConversationService:
         self.provider = provider
         self.memory_manager = memory_manager
 
+    async def _warm_start_session(
+        self,
+        session_id: str,
+        repository: "ConversationRepository",
+    ) -> int:
+        """
+        Load recent messages from database to RAM after server restart.
+
+        This "warm start" ensures conversation context is available even after
+        the server restarts and RAM is cleared. Only loads the most recent N
+        messages to respect memory limits.
+
+        Phase 3.5 Feature: Completes the persistence loop by reading from
+        database when RAM is empty.
+
+        Args:
+            session_id: The session identifier
+            repository: Database repository to load messages from
+
+        Returns:
+            int: Number of messages loaded from database
+
+        Example:
+            >>> # After server restart, RAM is empty
+            >>> count = await service._warm_start_session("session-123", repo)
+            >>> # RAM now has recent 50 messages from database
+            >>> print(f"Loaded {count} messages")
+            Loaded 35 messages
+
+        Note:
+            - Only loads up to max_messages (default: 50)
+            - Loads in chronological order (oldest to newest)
+            - Respects existing deque behavior
+            - Called automatically by send_message() when needed
+        """
+        # Get recent messages from database
+        # Limit to max_messages to respect RAM constraints
+        # Use get_recent_messages to get MOST RECENT N (not oldest N)
+        db_messages = await repository.get_recent_messages_as_chat_messages(
+            session_id,
+            limit=self.memory_manager.max_messages,
+        )
+
+        # Load into RAM in chronological order
+        # MemoryManager.add_message() maintains order via deque
+        for msg in db_messages:
+            await self.memory_manager.add_message(session_id, msg)
+
+        # Mark session as warm started for observability
+        if len(db_messages) > 0:
+            await self.memory_manager.mark_warm_started(session_id)
+
+        return len(db_messages)
+
     async def send_message(
         self,
         session_id: str,
@@ -147,6 +201,16 @@ class ConversationService:
         """
         # 1. Get conversation history for this session
         history = await self.memory_manager.get_messages(session_id)
+
+        # Phase 3.5: Warm start if RAM empty but database has messages
+        if not history and repository:
+            # RAM is empty - check if database has messages to load
+            loaded_count = await self._warm_start_session(session_id, repository)
+            if loaded_count > 0:
+                # Warm start successful - reload history from RAM
+                history = await self.memory_manager.get_messages(session_id)
+                # Log warm start for observability
+                print(f"🔥 Warm start: loaded {loaded_count} messages for session {session_id}")
 
         # 2. Build the full message list for the AI
         messages: list[ChatMessage] = []

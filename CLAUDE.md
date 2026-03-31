@@ -8,7 +8,7 @@ This file provides context for continuing this project in future Claude Code ses
 
 **Name**: AI Chatbot Personal Assistant
 **Purpose**: Learning-focused project to build a production-quality AI chatbot from scratch
-**Current Phase**: Phase 3 Complete ✅
+**Current Phase**: Phase 3.5 Complete ✅
 **Next Phase**: Phase 4 - Semantic Memory
 
 ### User Background
@@ -135,11 +135,11 @@ ai-playground/
    - Conversations survive server restarts!
 
 7. **Testing**
-   - **77 tests passing** ✅
+   - **82 tests passing** ✅
    - Unit tests for models (14 tests)
    - Unit tests for memory system (19 tests)
    - Unit tests for storage models (6 tests)
-   - Integration tests for conversation service (11 tests)
+   - Integration tests for conversation service (16 tests) - includes 5 warm start tests
    - Integration tests for repository (23 tests)
    - Integration tests for API (4 tests)
    - Mock providers and repositories for testing
@@ -152,7 +152,6 @@ ai-playground/
    - FastAPI `on_event` (should migrate to lifespan handlers)
    - `datetime.utcnow()` (should use `datetime.now(datetime.UTC)`)
 2. **Model Name**: Currently using `claude-sonnet-4-6` (updated in .env)
-3. **RAM-Database Sync**: Currently no loading from DB to RAM on startup (Phase 3 enhancement)
 
 ### Environment Configuration
 
@@ -258,6 +257,38 @@ poetry run alembic downgrade -1  # Rollback one migration
 - FastAPI shutdown event closes database connections
 - All 77 tests passing ✅
 - Conversations now survive server restarts!
+
+### ✅ Phase 3.5: Warm Start (COMPLETE)
+- Intelligent database-to-RAM loading on first access after restart
+- Lazy loading (only when session is accessed, not all sessions)
+- Respects context limits (loads most recent N messages, up to max_messages)
+- Observability with warm start logging and session stats
+- Chronological order preservation with proper deque behavior
+- Efficient query design (ORDER BY timestamp DESC + reversal)
+
+**Key Features Added**:
+- `ConversationService._warm_start_session()` - Loads recent messages from DB to RAM
+- `ConversationRepository.get_recent_messages()` - Retrieves most recent N messages
+- `MemoryManager.mark_warm_started()` - Tracks warm start events
+- Warm start detection in `send_message()` - Automatically triggers when RAM empty
+- Session stats enhancement - Added `warm_started` flag for observability
+- Logging statement: "🔥 Warm start: loaded {count} messages for session {session_id}"
+
+**What Changed**:
+- `ConversationService.send_message()` now detects empty RAM and triggers warm start
+- `ConversationRepository` gained `get_recent_messages()` and `get_recent_messages_as_chat_messages()`
+- `MemoryManager` tracks warm start status per session
+- `MemoryManager.get_session_stats()` includes `warm_started` boolean
+- Added 5 comprehensive warm start integration tests
+- All 82 tests passing ✅
+- Conversations now truly survive restarts with intelligent context loading!
+
+**Design Decisions**:
+- Use existing `SHORT_TERM_MAX_MESSAGES` config (no new settings needed)
+- Only warm start when RAM is completely empty (preserves existing session state)
+- Load most recent N messages to respect context limits
+- Database remains source of truth for full history
+- RAM cache optimized for recent conversation context
 
 ### 🔜 Phase 4: Semantic Memory (NEXT)
 - ChromaDB vector database integration
@@ -435,4 +466,4 @@ If user wants to test Phase 3:
 
 ---
 
-*Last Updated: Phase 3 Complete - 2026-03-31*
+*Last Updated: Phase 3.5 Complete - 2026-03-31*
