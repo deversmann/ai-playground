@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "ai-chatbot"
-version = "0.1.0"
+version = "0.4.0"
 description = "AI Chatbot Personal Assistant with provider abstraction and memory systems"
 authors = ["deversma"]
 readme = "README.md"
 packages = [{include = "chatbot", from = "src"}]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.14"  # Recommended: 3.12 for best compatibility
 # FastAPI and server
 fastapi = "^0.115.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
@@ -38,7 +38,7 @@ ruff = "^0.8.0"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

@@ -43,7 +43,7 @@ app = FastAPI(
     Currently no authentication required. This is a learning project.
     Production deployments should add proper authentication.
     """,
-    version="0.1.0",
+    version="0.4.0",
     docs_url="/docs",  # Swagger UI
     redoc_url="/redoc",  # ReDoc alternative docs
     openapi_url="/openapi.json",  # OpenAPI schema
@@ -139,13 +139,13 @@ async def root():
         >>> # HTTP GET /
         >>> {
         ...     "message": "AI Chatbot API",
-        ...     "version": "0.1.0",
+        ...     "version": "0.4.0",
         ...     "docs": "/docs"
         ... }
     """
     return {
-        "message": "AI Chatbot API - Phase 3: Persistent Storage",
-        "version": "0.3.0",
+        "message": "AI Chatbot API - Phase 3.5: Warm Start",
+        "version": "0.4.0",
         "provider": settings.provider_type,
         "database": settings.database_url.split(":///")[-1],  # Just the DB file
         "docs": "/docs",

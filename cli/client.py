@@ -160,7 +160,7 @@ class APIClient:
         Example:
             >>> info = await client.get_api_info()
             >>> print(info["version"])
-            "0.1.0"
+            "0.4.0"
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:

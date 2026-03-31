@@ -18,6 +18,7 @@ Example:
 import asyncio
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import InMemoryHistory
@@ -62,7 +63,8 @@ class ChatInterface:
         """
         self.console = Console()
         self.client = APIClient(base_url=api_url)
-        self.session_id = str(uuid.uuid4())
+        # Load or create session_id (persists across CLI restarts for warm start)
+        self.session_id, self.session_resumed = self._load_or_create_session_id()
         self.temperature = temperature
         self.max_tokens = max_tokens
 
@@ -75,6 +77,56 @@ class ChatInterface:
         self.message_count = 0
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+
+    @staticmethod
+    def _get_session_file() -> Path:
+        """
+        Get path to session_id persistence file.
+
+        Returns:
+            Path: ~/.cache/ai-chatbot/session_id
+        """
+        cache_dir = Path.home() / ".cache" / "ai-chatbot"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / "session_id"
+
+    def _load_or_create_session_id(self) -> tuple[str, bool]:
+        """
+        Load session_id from file or create a new one.
+
+        This allows the CLI to resume the same conversation across restarts,
+        enabling warm start functionality (Phase 3.5).
+
+        Returns:
+            tuple[str, bool]: (session_id, resumed)
+                - session_id: Session ID (UUID)
+                - resumed: True if loaded from file, False if newly created
+        """
+        session_file = self._get_session_file()
+
+        # Try to load existing session
+        if session_file.exists():
+            try:
+                session_id = session_file.read_text().strip()
+                if session_id:  # Validate it's not empty
+                    return session_id, True  # Session resumed
+            except Exception:
+                pass  # If file is corrupted, create new session
+
+        # Create new session and save
+        session_id = str(uuid.uuid4())
+        self._save_session_id(session_id)
+        return session_id, False  # New session
+
+    def _save_session_id(self, session_id: str) -> None:
+        """
+        Save session_id to file for persistence.
+
+        Args:
+            session_id: Session ID to save
+        """
+        session_file = self._get_session_file()
+        session_file.write_text(session_id)
 
     async def run(self):
         """
@@ -150,8 +202,8 @@ class ChatInterface:
 Welcome to the AI Chatbot! This is a learning project demonstrating
 modern Python architecture with FastAPI, async/await, and provider abstraction.
 
-**Phase 2: Now with conversation memory!** The AI remembers your conversation
-and maintains context across multiple messages.
+**Phase 3.5: Now with warm start!** The AI remembers your conversation
+across CLI restarts. Your last session is automatically resumed.
 
 ## Commands
 - `/help` - Show help message
@@ -183,7 +235,18 @@ Let's chat!
         info_table.add_row("Status:", f"[green]{health['status']}[/green]")
         info_table.add_row("Provider:", f"[cyan]{health['provider']}[/cyan]")
         info_table.add_row("Version:", f"{health['version']}")
-        info_table.add_row("Session ID:", f"[dim]{self.session_id}[/dim]")
+
+        # Show if session was resumed (warm start)
+        if self.session_resumed:
+            info_table.add_row(
+                "Session:",
+                f"[yellow]Resumed[/yellow] [dim](ID: {self.session_id[:8]}...)[/dim]"
+            )
+        else:
+            info_table.add_row(
+                "Session:",
+                f"[green]New[/green] [dim](ID: {self.session_id[:8]}...)[/dim]"
+            )
 
         self.console.print("\n[bold]API Status[/bold]")
         self.console.print(info_table)
@@ -338,9 +401,14 @@ Use `/new` to start a fresh conversation with no context.
 
         This clears the conversation context on the server side by
         creating a new session. Local stats are also reset.
+
+        The new session_id is persisted to file so it can be resumed
+        if the CLI is restarted.
         """
         old_session = self.session_id
         self.session_id = str(uuid.uuid4())
+        # Persist new session_id for warm start on next CLI restart
+        self._save_session_id(self.session_id)
 
         # Reset local stats
         old_message_count = self.message_count

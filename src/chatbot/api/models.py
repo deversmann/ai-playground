@@ -146,13 +146,13 @@ class HealthResponse(BaseModel):
     Example JSON:
         {
             "status": "healthy",
-            "version": "0.1.0",
+            "version": "0.4.0",
             "provider": "anthropic"
         }
     """
 
     status: str = Field(..., description="Health status", examples=["healthy"])
-    version: str = Field(..., description="API version", examples=["0.1.0"])
+    version: str = Field(..., description="API version", examples=["0.4.0"])
     provider: str = Field(..., description="Configured AI provider", examples=["anthropic"])
 
 

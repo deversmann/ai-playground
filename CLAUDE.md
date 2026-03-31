@@ -85,7 +85,7 @@ ai-playground/
 
 ---
 
-## Current State (Phase 3 Complete)
+## Current State (Phase 3.5 Complete)
 
 ### What Works ✅
 
@@ -110,6 +110,8 @@ ai-playground/
    - Token usage tracking
    - Command history (Up/Down arrows)
    - Session management with `/new` command
+   - **Session Persistence**: Session ID stored in `~/.cache/ai-chatbot/session_id`
+   - Conversations survive CLI restarts (loads same session on restart)
 
 4. **Configuration**
    - Type-safe Pydantic Settings
@@ -124,7 +126,7 @@ ai-playground/
    - Token estimation for context window management
    - Lazy session creation and CRUD operations
 
-6. **Persistent Storage (Phase 3)** ✨ NEW
+6. **Persistent Storage (Phase 3)** ✨
    - **SQLAlchemy 2.0**: Async ORM with typed Mapped columns
    - **Database Models**: Conversation and Message with relationships
    - **ConversationRepository**: Full CRUD operations with repository pattern
@@ -134,7 +136,18 @@ ai-playground/
    - **FastAPI Integration**: Startup/shutdown lifecycle, dependency injection
    - Conversations survive server restarts!
 
-7. **Testing**
+7. **Warm Start (Phase 3.5)** ✨ LATEST
+   - **Intelligent Context Restoration**: Automatically loads recent messages from DB to RAM after restart
+   - **Lazy Loading**: Only loads when session is accessed (not all sessions eagerly)
+   - **Efficient Queries**: DESC + LIMIT + reverse for "most recent N" pattern
+   - **CLI Session Persistence**: Session ID stored in `~/.cache/ai-chatbot/session_id`
+   - **Per-User Isolation**: Each user account has their own session file
+   - **Observability**: Warm start logging (`🔥 Warm start: loaded N messages`) and metrics
+   - **Session Stats**: Added `warm_started` flag to session statistics
+   - **Respects Limits**: Only loads recent messages that fit in RAM (SHORT_TERM_MAX_MESSAGES)
+   - Conversations truly survive both API and CLI restarts with full context!
+
+8. **Testing**
    - **82 tests passing** ✅
    - Unit tests for models (14 tests)
    - Unit tests for memory system (19 tests)
@@ -147,11 +160,11 @@ ai-playground/
 
 ### Known Issues / Technical Debt
 
-1. **Deprecation Warnings**:
+1. **Deprecation Warnings** (non-blocking):
    - Pydantic `Config` class (should migrate to `ConfigDict`)
    - FastAPI `on_event` (should migrate to lifespan handlers)
    - `datetime.utcnow()` (should use `datetime.now(datetime.UTC)`)
-2. **Model Name**: Currently using `claude-sonnet-4-6` (updated in .env)
+2. **Python Version**: Using Python 3.12 (recommended). Python 3.14+ not yet supported due to Anthropic SDK compatibility.
 
 ### Environment Configuration
 

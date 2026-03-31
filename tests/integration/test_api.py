@@ -28,7 +28,7 @@ def test_root_endpoint(client):
     data = response.json()
     assert "message" in data
     assert "version" in data
-    assert data["version"] == "0.3.0"  # Phase 3
+    assert data["version"] == "0.4.0"  # Phase 3.5
 
 
 def test_health_endpoint(client):

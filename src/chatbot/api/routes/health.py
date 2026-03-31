@@ -10,7 +10,7 @@ Useful for:
 
 Example:
     $ curl http://localhost:8000/health
-    {"status": "healthy", "version": "0.1.0", "provider": "anthropic"}
+    {"status": "healthy", "version": "0.4.0", "provider": "anthropic"}
 """
 
 from fastapi import APIRouter, Depends
@@ -48,10 +48,10 @@ async def health_check(
         >>> # HTTP GET /health
         >>> {
         ...     "status": "healthy",
-        ...     "version": "0.1.0",
+        ...     "version": "0.4.0",
         ...     "provider": "anthropic"
         ... }
     """
     return HealthResponse(
-        status="healthy", version="0.1.0", provider=settings.provider_type
+        status="healthy", version="0.4.0", provider=settings.provider_type
     )
