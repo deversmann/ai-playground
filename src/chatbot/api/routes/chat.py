@@ -19,7 +19,8 @@ Example:
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from chatbot.core import ConversationService
-from ..dependencies import get_conversation_service
+from chatbot.storage import ConversationRepository
+from ..dependencies import get_conversation_repository, get_conversation_service
 from ..models import ChatRequest, ChatResponse, TokenUsageResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -57,6 +58,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def send_message(
     request: ChatRequest,
     service: ConversationService = Depends(get_conversation_service),
+    repository: ConversationRepository = Depends(get_conversation_repository),
 ) -> ChatResponse:
     """
     Send a message to the AI and get a response with conversation context.
@@ -127,13 +129,15 @@ async def send_message(
         - Smart context management for better responses
     """
     try:
-        # Phase 2: Conversation service handles everything!
-        # It manages history, calls provider, and stores messages
+        # Phase 3: Conversation service handles RAM + Database!
+        # It manages in-memory history, calls provider, stores in RAM,
+        # and persists to database for permanent storage
         ai_response = await service.send_message(
             session_id=request.session_id,
             user_message=request.message,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
+            repository=repository,  # Phase 3: Database persistence
         )
 
         # Convert to API response format

@@ -1605,4 +1605,811 @@ Phase 2 gave us **short-term memory in RAM**. Phase 3 will make it **persistent 
 
 ---
 
+# Phase 3: Persistent Storage
+
+In Phase 3, we added **database persistence** to make conversations survive server restarts. We built a two-tier memory architecture combining RAM (speed) with disk (permanence).
+
+## The Problem: Lost on Restart
+
+In Phase 2, all conversation history lived in RAM. This meant:
+
+```python
+# Phase 2 Problem:
+1. Start server → MemoryManager creates empty dictionaries
+2. Have conversation → Messages stored in RAM
+3. Restart server → ALL HISTORY LOST ❌
+```
+
+Even though the AI remembered context **during** a conversation, everything was lost when the server stopped.
+
+## The Solution: Two-Tier Memory
+
+We built a **hybrid architecture** combining the best of both worlds:
+
+```
+┌─────────────────────────────────────────┐
+│      ConversationService                 │
+│      (Orchestration Layer)               │
+└─────────────┬───────────────────────────┘
+              │
+      ┌───────┴────────┐
+      ▼                ▼
+┌──────────┐    ┌─────────────────┐
+│ Memory   │    │ Conversation    │
+│ Manager  │    │ Repository      │
+│ (RAM)    │    │ (Database)      │
+└──────────┘    └─────────────────┘
+   Fast!            Permanent!
+   Recent           Full history
+   ~50 msgs         All messages
+```
+
+**Tier 1: MemoryManager (RAM)**
+- Stores recent ~50 messages
+- Lightning fast in-memory access
+- Used for building AI request context
+- Lost on restart (but that's okay!)
+
+**Tier 2: Database (Disk)**
+- Stores ALL messages forever
+- Survives server restarts
+- Can retrieve historical conversations
+- Slightly slower (disk I/O)
+
+**Why Two Tiers?**
+- **Speed**: AI requests need fast access to recent context
+- **Scale**: Don't need ALL history in RAM (memory intensive)
+- **Persistence**: Important conversations preserved forever
+- **Flexibility**: Could load old messages from DB into RAM on demand
+
+---
+
+## SQLAlchemy 2.0 - Async ORM
+
+### What is an ORM?
+
+**ORM = Object-Relational Mapping**
+
+It maps database tables to Python classes, so you can work with objects instead of writing SQL.
+
+#### Without ORM (Raw SQL)
+```python
+# ❌ Manual SQL - tedious and error-prone
+cursor.execute("""
+    INSERT INTO messages (conversation_id, role, content, timestamp)
+    VALUES (?, ?, ?, ?)
+""", (conv_id, "user", "Hello", datetime.utcnow()))
+
+result = cursor.execute("""
+    SELECT * FROM messages
+    WHERE conversation_id = ?
+    ORDER BY timestamp
+""", (conv_id,))
+
+rows = result.fetchall()
+# Now manually convert rows to Python objects...
+for row in rows:
+    msg = {"id": row[0], "role": row[2], "content": row[3]}  # Error-prone indexing!
+```
+
+**Problems:**
+- SQL in strings (no syntax checking)
+- Manual parameter binding (`?` placeholders)
+- Manual result conversion (tuple → object)
+- Database-specific SQL dialects
+- No type safety
+
+#### With ORM (SQLAlchemy)
+```python
+# ✅ Python objects - clean and type-safe
+message = Message(
+    conversation_id=conv_id,
+    role="user",
+    content="Hello",
+    timestamp=datetime.utcnow()
+)
+session.add(message)
+await session.commit()  # SQLAlchemy generates SQL!
+
+# Query with Python
+messages = await session.execute(
+    select(Message)
+    .where(Message.conversation_id == conv_id)
+    .order_by(Message.timestamp)
+)
+result_list = messages.scalars().all()  # List[Message]
+```
+
+**Benefits:**
+- ✅ Write Python, not SQL
+- ✅ Type-safe (IDE autocomplete works)
+- ✅ Database-agnostic (swap SQLite ↔ PostgreSQL easily)
+- ✅ Automatic validation
+- ✅ Relationship management
+
+### SQLAlchemy 2.0 vs 1.x
+
+SQLAlchemy 2.0 was a **major rewrite** released in 2023.
+
+**Key Changes:**
+
+**1. Async/Await Support**
+```python
+# SQLAlchemy 1.x - Synchronous (blocks)
+session = Session(engine)
+result = session.query(Message).filter_by(role="user").all()
+
+# SQLAlchemy 2.0 - Async (non-blocking)
+async with AsyncSession(engine) as session:
+    result = await session.execute(
+        select(Message).where(Message.role == "user")
+    )
+    messages = result.scalars().all()
+```
+
+**2. New select() API**
+```python
+# Old 1.x query API
+session.query(Message).filter(Message.role == "user").order_by(Message.timestamp)
+
+# New 2.0 select() API
+select(Message).where(Message.role == "user").order_by(Message.timestamp)
+```
+
+The new API is:
+- More explicit (you can see it's a SELECT)
+- Works with async
+- Type-safe
+- Consistent with SQL structure
+
+**3. Typed Mapped Columns**
+```python
+# SQLAlchemy 1.x
+class Message:
+    id = Column(Integer, primary_key=True)
+    content = Column(String)
+
+# SQLAlchemy 2.0 - Type hints!
+class Message(Base):
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    content: Mapped[str] = mapped_column(String)
+```
+
+Benefits:
+- IDE knows `message.id` is an `int`
+- mypy can type-check your code
+- Better autocomplete
+
+### Defining Models
+
+```python
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import Integer, String, Text, DateTime, ForeignKey
+
+# Base class for all models
+class Base(DeclarativeBase):
+    pass
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
+    # Unique session identifier
+    session_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # One-to-many relationship
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",  # Delete messages when conversation deleted
+        order_by="Message.timestamp"   # Always chronologically ordered
+    )
+
+class Message(Base):
+    __tablename__ = "messages"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id"))
+    role: Mapped[str] = mapped_column(String(50))
+    content: Mapped[str] = mapped_column(Text)  # Text = unlimited length
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # Optional field
+    token_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    # Back-reference to conversation
+    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+```
+
+**Key Concepts:**
+
+**1. Mapped[type]** - Type hints for ORM attributes
+- `Mapped[int]` - Required integer field
+- `Mapped[str]` - Required string field
+- `Mapped[Optional[int]]` - Nullable integer
+- `Mapped[list["Message"]]` - One-to-many relationship
+
+**2. mapped_column()** - Column definition
+- Replaces `Column()` from SQLAlchemy 1.x
+- Defines database column type
+- Configures constraints (primary_key, unique, index, nullable)
+
+**3. relationship()** - Links between tables
+- `back_populates` - Bidirectional relationship
+- `cascade` - What happens on delete/update
+- `order_by` - Default ordering
+
+**4. ForeignKey()** - Links rows between tables
+- Creates foreign key constraint
+- Ensures referential integrity
+- `conversation_id` references `conversations.id`
+
+### Async Engine and Sessions
+
+**Creating the Async Engine:**
+
+```python
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+# Create engine
+engine = create_async_engine(
+    "sqlite+aiosqlite:///./chatbot.db",  # Database URL
+    echo=False,                          # Don't log SQL queries
+    pool_size=5,                         # Connection pool size
+    max_overflow=10,                     # Can create 10 more if needed
+    pool_pre_ping=True,                  # Test connections before use
+    pool_recycle=3600,                   # Refresh connections hourly
+)
+```
+
+**Database URLs:**
+- SQLite: `"sqlite+aiosqlite:///./chatbot.db"`
+- PostgreSQL: `"postgresql+asyncpg://user:pass@host/db"`
+- Just change the URL - same code works!
+
+**Connection Pooling:**
+
+Instead of creating a new connection for every request, SQLAlchemy maintains a **pool** of reusable connections:
+
+```
+Request 1 → Gets connection from pool
+         ↓
+         Uses connection
+         ↓
+         Returns to pool (not closed!)
+         
+Request 2 → Reuses same connection (fast!)
+```
+
+**Benefits:**
+- Much faster (no connection overhead)
+- Limits concurrent connections
+- Automatically handles connection lifecycle
+
+**Creating Sessions:**
+
+```python
+# Session factory
+AsyncSessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,  # Don't expire objects after commit
+    autoflush=False,         # Manual flushing for control
+    autocommit=False,        # Explicit commits for safety
+)
+
+# Use in async context
+async with AsyncSessionLocal() as session:
+    # Use session for queries
+    result = await session.execute(select(Message))
+    # Automatically committed and closed
+```
+
+**Session Lifecycle:**
+1. **Create**: `async with AsyncSessionLocal() as session`
+2. **Use**: `await session.execute(...)`, `session.add(...)`
+3. **Commit**: `await session.commit()` (saves changes)
+4. **Close**: Automatic via context manager
+
+---
+
+## Repository Pattern
+
+The **Repository Pattern** separates data access logic from business logic.
+
+### Without Repository Pattern
+
+```python
+# ❌ Business logic mixed with database code
+class ConversationService:
+    async def send_message(self, session_id: str, message: str):
+        # Database queries mixed with business logic 😱
+        async with get_db_session() as db:
+            result = await db.execute(
+                select(Message).where(Message.session_id == session_id)
+            )
+            messages = result.scalars().all()
+            
+            # More SQL queries...
+            conv = await db.execute(select(Conversation)...)
+            # Business logic
+            # More SQL...
+```
+
+**Problems:**
+- Service knows about database details
+- Hard to test (need real database)
+- SQL scattered everywhere
+- Can't swap storage implementation
+
+### With Repository Pattern
+
+```python
+# ✅ Clean separation of concerns
+
+# Repository - handles ALL database operations
+class ConversationRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+    
+    async def get_messages(self, session_id: str) -> list[Message]:
+        """Get messages - repository knows SQL details."""
+        conv = await self._get_conversation(session_id)
+        if not conv:
+            return []
+        
+        stmt = select(Message).where(
+            Message.conversation_id == conv.id
+        ).order_by(Message.timestamp)
+        
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
+    
+    async def add_message(self, session_id: str, role: str, content: str) -> Message:
+        """Add message - repository handles DB operations."""
+        conv = await self.get_or_create_conversation(session_id)
+        
+        msg = Message(
+            conversation_id=conv.id,
+            role=role,
+            content=content,
+            timestamp=datetime.utcnow()
+        )
+        self.session.add(msg)
+        await self.session.flush()
+        return msg
+
+# Service - clean business logic only!
+class ConversationService:
+    async def send_message(
+        self,
+        session_id: str,
+        message: str,
+        repository: ConversationRepository
+    ):
+        # Just business logic - no SQL!
+        history = await repository.get_messages(session_id)
+        
+        # Build context, call AI...
+        ai_response = await self.provider.chat(...)
+        
+        # Save to repository
+        await repository.add_message(session_id, "user", message)
+        await repository.add_message(session_id, "assistant", ai_response.content)
+        
+        return ai_response
+```
+
+**Benefits:**
+
+**1. Single Responsibility**
+- Repository: Database operations only
+- Service: Business logic only
+- Each class has one clear job
+
+**2. Testability**
+```python
+# Easy to test with mock repository
+mock_repo = Mock(spec=ConversationRepository)
+mock_repo.get_messages.return_value = []
+
+service = ConversationService(provider, memory, mock_repo)
+# Test service without touching database!
+```
+
+**3. Maintainability**
+- All SQL in one place
+- Easy to optimize queries
+- Easy to add new operations
+
+**4. Swappable Implementation**
+```python
+# Could switch to MongoDB, Redis, etc.
+# Just implement same interface!
+class MongoConversationRepository:
+    async def get_messages(self, session_id: str) -> list[Message]:
+        # MongoDB queries instead of SQL
+        ...
+```
+
+### Repository CRUD Operations
+
+Our `ConversationRepository` provides:
+
+```python
+# CREATE
+await repo.create_conversation(session_id)
+await repo.add_message(session_id, role, content)
+await repo.add_messages_batch(session_id, messages)
+
+# READ
+conv = await repo.get_conversation(session_id)
+messages = await repo.get_messages(session_id)
+count = await repo.count_messages(session_id)
+stats = await repo.get_conversation_stats(session_id)
+conversations = await repo.list_conversations()
+
+# UPDATE (implicit via add_message - updates conversation.updated_at)
+
+# DELETE
+await repo.clear_messages(session_id)  # Clear messages, keep conversation
+await repo.delete_conversation(session_id)  # Delete everything
+```
+
+---
+
+## Database Migrations with Alembic
+
+### What is a Migration?
+
+A **migration** is a version-controlled change to your database schema.
+
+**The Problem:**
+
+```python
+# Week 1: Your database schema
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    content TEXT
+)
+
+# Week 2: You realize you need timestamps!
+# How do you update production databases without losing data?
+```
+
+Without migrations:
+- Manual `ALTER TABLE` commands
+- Risk of data loss
+- No version history
+- Hard to deploy to multiple environments
+
+### Alembic - Database Version Control
+
+**Alembic** is to databases what Git is to code.
+
+```bash
+# Initialize Alembic
+alembic init alembic
+
+# Create a migration (after changing models)
+alembic revision --autogenerate -m "Add timestamp column"
+
+# Apply migration
+alembic upgrade head
+
+# Rollback if needed
+alembic downgrade -1
+```
+
+**Migration File Structure:**
+
+```python
+"""Add timestamp column
+
+Revision ID: abc123
+Revises: def456
+Create Date: 2026-03-31 10:00:00
+"""
+from alembic import op
+import sqlalchemy as sa
+
+# Migration ID chain
+revision = 'abc123'
+down_revision = 'def456'  # Previous migration
+
+def upgrade() -> None:
+    """Upgrade database schema."""
+    op.add_column('messages',
+        sa.Column('timestamp', sa.DateTime(), nullable=True)
+    )
+
+def downgrade() -> None:
+    """Rollback this migration."""
+    op.drop_column('messages', 'timestamp')
+```
+
+**How It Works:**
+
+1. **Detect Changes**: Alembic compares your models to current database
+2. **Generate SQL**: Creates `upgrade()` and `downgrade()` functions
+3. **Track Versions**: Maintains migration history in `alembic_version` table
+4. **Apply Safely**: Runs migrations in order
+
+**Autogenerate Example:**
+
+```bash
+# You change models.py:
+class Message(Base):
+    # ... existing fields ...
+    token_count: Mapped[Optional[int]] = mapped_column(Integer)  # NEW!
+
+# Alembic detects the change:
+$ alembic revision --autogenerate -m "Add token_count"
+INFO  [alembic.autogenerate.compare] Detected added column 'messages.token_count'
+Generating migration file...
+
+# Generated migration:
+def upgrade() -> None:
+    op.add_column('messages',
+        sa.Column('token_count', sa.Integer(), nullable=True)
+    )
+```
+
+**Benefits:**
+- ✅ Version control for database schema
+- ✅ Safe deployment (can rollback)
+- ✅ Team coordination (everyone's DB stays in sync)
+- ✅ Production safety (tested migrations)
+
+### Configuring Alembic for Async
+
+Alembic needs special configuration for async SQLAlchemy:
+
+```python
+# alembic/env.py
+import asyncio
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+# Import your models
+from chatbot.storage.models import Base
+
+# Set target metadata for autogenerate
+target_metadata = Base.metadata
+
+async def run_async_migrations():
+    """Run migrations asynchronously."""
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section),
+        prefix="sqlalchemy.",
+    )
+    
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+def run_migrations_online():
+    """Entry point for migrations."""
+    asyncio.run(run_async_migrations())
+```
+
+---
+
+## FastAPI Database Integration
+
+### Dependency Injection for Database Sessions
+
+FastAPI's dependency injection works perfectly with database sessions:
+
+```python
+# Database session dependency
+async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Provide a database session for each request."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()  # Commit if no exceptions
+        except Exception:
+            await session.rollback()  # Rollback on error
+            raise
+        finally:
+            await session.close()  # Always close
+
+# Repository dependency (uses session dependency)
+async def get_conversation_repository(
+    db: AsyncSession = Depends(get_db_session)
+) -> ConversationRepository:
+    """Provide a repository for each request."""
+    return ConversationRepository(session=db)
+
+# Use in routes
+@app.post("/chat/send")
+async def send_message(
+    request: ChatRequest,
+    service: ConversationService = Depends(get_conversation_service),
+    repository: ConversationRepository = Depends(get_conversation_repository),
+):
+    # Each request gets its own DB session and repository!
+    response = await service.send_message(
+        session_id=request.session_id,
+        user_message=request.message,
+        repository=repository,  # Pass to service
+    )
+    # Session automatically committed and closed after request
+    return response
+```
+
+**Request Lifecycle:**
+
+```
+1. Request arrives
+   ↓
+2. FastAPI calls get_db_session()
+   - Creates new session from pool
+   ↓
+3. FastAPI calls get_conversation_repository(db=session)
+   - Creates repository with session
+   ↓
+4. Route handler executes
+   - Uses repository for DB operations
+   ↓
+5. Request completes successfully
+   - Session automatically commits
+   - Session returned to pool
+   
+   OR (if exception)
+   - Session automatically rolls back
+   - Session returned to pool
+```
+
+**Why This Pattern?**
+
+- **One session per request**: Isolated, no conflicts
+- **Automatic cleanup**: Always commits or rolls back
+- **Easy testing**: Override dependencies with mocks
+- **Thread-safe**: Each request has its own session
+
+### Application Lifecycle
+
+```python
+# FastAPI startup/shutdown events
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup."""
+    from chatbot.storage import init_db
+    
+    db_manager = init_db(settings.database_url)
+    # Tables created via Alembic migrations
+    print("Database initialized ✅")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connections on shutdown."""
+    from chatbot.storage import get_db_manager
+    
+    db_manager = get_db_manager()
+    await db_manager.close()
+    print("Database closed ✅")
+```
+
+---
+
+## Key Takeaways - Phase 3
+
+### Concepts Mastered
+
+**1. SQLAlchemy 2.0 Async ORM**
+- Object-Relational Mapping (ORM)
+- Async/await database operations
+- Typed Mapped columns
+- Relationships and foreign keys
+- Connection pooling
+
+**2. Repository Pattern**
+- Separation of data access from business logic
+- Single Responsibility Principle
+- Testability with mocks
+- Swappable implementations
+
+**3. Database Migrations**
+- Version control for schema
+- Alembic autogenerate
+- Upgrade/downgrade paths
+- Production-safe deployments
+
+**4. FastAPI Integration**
+- Dependency injection for sessions
+- Request-scoped sessions
+- Automatic commit/rollback
+- Lifecycle management
+
+**5. Two-Tier Memory Architecture**
+- RAM: Fast, recent messages
+- Database: Permanent, full history
+- Best of both worlds
+
+### Architecture Evolution
+
+**Before (Phase 2):**
+```
+API → ConversationService → MemoryManager (RAM only)
+                                 ↓
+                         Lost on restart ❌
+```
+
+**After (Phase 3):**
+```
+API → ConversationService → MemoryManager (RAM)
+                         → Repository (Database)
+                                 ↓
+                         Persists forever ✅
+```
+
+### Python Features Used
+
+- `async/await` - Async database operations
+- `AsyncGenerator` - Async context managers
+- `Mapped[Type]` - Type-safe ORM attributes
+- Context managers - Automatic session cleanup
+- Dependency injection - Clean architecture
+
+### Database Schema
+
+```sql
+CREATE TABLE conversations (
+    id INTEGER PRIMARY KEY,
+    session_id VARCHAR(255) UNIQUE,
+    created_at DATETIME,
+    updated_at DATETIME,
+    message_count INTEGER
+);
+
+CREATE TABLE messages (
+    id INTEGER PRIMARY KEY,
+    conversation_id INTEGER REFERENCES conversations(id),
+    role VARCHAR(50),
+    content TEXT,
+    timestamp DATETIME,
+    token_count INTEGER NULL
+);
+
+CREATE INDEX idx_conversation_timestamp ON messages(conversation_id, timestamp);
+CREATE INDEX idx_role ON messages(role);
+```
+
+### Testing Strategy
+
+- **Unit tests**: ORM models in isolation
+- **Integration tests**: Repository with in-memory SQLite
+- **API tests**: Mock database dependencies
+- **77 total tests passing** ✅
+
+### What We Built
+
+1. **Database Models** - Conversation and Message ORM classes
+2. **DatabaseManager** - Connection pooling and session factory
+3. **ConversationRepository** - Complete CRUD operations
+4. **Alembic Migrations** - Version-controlled schema
+5. **FastAPI Integration** - Startup/shutdown lifecycle
+6. **Two-Tier Memory** - RAM + Database persistence
+7. **Comprehensive Tests** - 29 new storage tests
+
+---
+
+## Next Phase: Semantic Memory
+
+In Phase 4, we'll add **vector search** with ChromaDB:
+- Embed messages with AI (convert to vectors)
+- Find semantically similar past conversations
+- Intelligent context retrieval
+- "I talked about this before" feature
+- Cross-session knowledge discovery
+
+Phase 3 gave us **permanent storage**. Phase 4 will make it **intelligent**!
+
+---
+
 *This textbook will be updated after each phase with new concepts and learnings.*

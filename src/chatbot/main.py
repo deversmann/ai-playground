@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from chatbot.api.routes import chat, health
 from chatbot.config import get_settings
+from chatbot.storage import get_db_manager, init_db
 
 # Load settings
 settings = get_settings()
@@ -69,7 +70,7 @@ async def startup_event():
     Run on application startup.
 
     This is a good place to:
-    - Initialize database connections (Phase 3)
+    - Initialize database connections (Phase 3) ✅
     - Load ML models
     - Start background tasks
     - Log startup info
@@ -80,6 +81,14 @@ async def startup_event():
     print(f"Model: {settings.default_model}")
     print(f"Temperature: {settings.default_temperature}")
     print(f"Max Tokens: {settings.default_max_tokens}")
+
+    # Initialize database (Phase 3)
+    print(f"\nInitializing database: {settings.database_url}")
+    db_manager = init_db(settings.database_url, echo=False)
+    # Note: Tables are created via Alembic migrations
+    # await db_manager.create_tables()  # Only for testing/development
+    print("Database initialized ✅")
+
     print("=" * 60)
     print("API running at:")
     print(f"  - http://{settings.api_host}:{settings.api_port}")
@@ -93,12 +102,22 @@ async def shutdown_event():
     Run on application shutdown.
 
     This is a good place to:
-    - Close database connections (Phase 3)
+    - Close database connections (Phase 3) ✅
     - Save state
     - Cleanup resources
     - Log shutdown info
     """
     print("\nShutting down AI Chatbot API...")
+
+    # Close database connections (Phase 3)
+    try:
+        db_manager = get_db_manager()
+        await db_manager.close()
+        print("Database connections closed ✅")
+    except RuntimeError:
+        # Database wasn't initialized
+        pass
+
     print("Cleanup complete. Goodbye!")
 
 
@@ -125,9 +144,10 @@ async def root():
         ... }
     """
     return {
-        "message": "AI Chatbot API - Phase 1: Foundation",
-        "version": "0.1.0",
+        "message": "AI Chatbot API - Phase 3: Persistent Storage",
+        "version": "0.3.0",
         "provider": settings.provider_type,
+        "database": settings.database_url.split(":///")[-1],  # Just the DB file
         "docs": "/docs",
         "health": "/health",
         "endpoints": {

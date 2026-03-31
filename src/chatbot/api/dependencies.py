@@ -20,10 +20,14 @@ Example:
 
 from functools import lru_cache
 
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from chatbot.config import Settings, get_settings
 from chatbot.core import ConversationService
 from chatbot.memory import MemoryManager
 from chatbot.providers import AIProvider, create_provider
+from chatbot.storage import ConversationRepository, get_db_session
 
 
 @lru_cache()
@@ -163,3 +167,46 @@ def get_conversation_service() -> ConversationService:
         provider=provider,
         memory_manager=memory_manager,
     )
+
+
+# ============================================================================
+# Database Dependencies (Phase 3+)
+# ============================================================================
+
+
+async def get_conversation_repository(
+    db: AsyncSession = Depends(get_db_session),
+) -> ConversationRepository:
+    """
+    Get a conversation repository instance.
+
+    This dependency creates a repository for database operations on
+    conversations and messages. Each request gets its own repository
+    with its own database session.
+
+    Args:
+        db: Database session (automatically injected by FastAPI)
+
+    Returns:
+        ConversationRepository: Repository for conversation operations
+
+    Usage in routes:
+        @app.get("/conversations")
+        async def list_conversations(
+            repo: ConversationRepository = Depends(get_conversation_repository)
+        ):
+            conversations = await repo.list_conversations()
+            return conversations
+
+    Note on Session Lifecycle:
+        - get_db_session creates a new session per request
+        - Session is passed to repository
+        - Repository uses session for all queries
+        - Session is automatically committed and closed after request
+
+    Why Not Cached?
+        Unlike other dependencies, this is NOT cached with @lru_cache.
+        Each request needs its own database session to avoid conflicts.
+        The repository is lightweight - it's just a wrapper around the session.
+    """
+    return ConversationRepository(session=db)

@@ -8,8 +8,8 @@ This file provides context for continuing this project in future Claude Code ses
 
 **Name**: AI Chatbot Personal Assistant
 **Purpose**: Learning-focused project to build a production-quality AI chatbot from scratch
-**Current Phase**: Phase 2 Complete ✅
-**Next Phase**: Phase 3 - Persistent Storage
+**Current Phase**: Phase 3 Complete ✅
+**Next Phase**: Phase 4 - Semantic Memory
 
 ### User Background
 - Has coding background
@@ -40,7 +40,9 @@ This file provides context for continuing this project in future Claude Code ses
 
 - **Language**: Python 3.11+
 - **Web Framework**: FastAPI (async REST API)
-- **AI Provider**: Anthropic Claude (currently `claude-sonnet-4-5`)
+- **AI Provider**: Anthropic Claude (currently `claude-sonnet-4-6`)
+- **Database**: SQLite (dev) with SQLAlchemy 2.0 async ORM
+- **Migrations**: Alembic for database versioning
 - **Dependency Management**: Poetry
 - **Configuration**: Pydantic Settings with .env
 - **CLI**: Rich + Prompt Toolkit
@@ -83,7 +85,7 @@ ai-playground/
 
 ---
 
-## Current State (Phase 2 Complete)
+## Current State (Phase 3 Complete)
 
 ### What Works ✅
 
@@ -114,7 +116,7 @@ ai-playground/
    - `.env` file loading
    - Validation with helpful errors
 
-5. **Memory System (Phase 2)** ✨ NEW
+5. **Memory System (Phase 2)**
    - **ShortTermMemory**: Deque-based message queue (max 50 messages)
    - **MemoryManager**: Thread-safe multi-session coordinator
    - **ConversationService**: Orchestration layer for chat flow
@@ -122,13 +124,25 @@ ai-playground/
    - Token estimation for context window management
    - Lazy session creation and CRUD operations
 
-6. **Testing**
-   - **48 tests passing** ✅
+6. **Persistent Storage (Phase 3)** ✨ NEW
+   - **SQLAlchemy 2.0**: Async ORM with typed Mapped columns
+   - **Database Models**: Conversation and Message with relationships
+   - **ConversationRepository**: Full CRUD operations with repository pattern
+   - **Alembic Migrations**: Version-controlled schema changes
+   - **DatabaseManager**: Connection pooling and async session management
+   - **Two-Tier Architecture**: RAM (fast) + Database (permanent)
+   - **FastAPI Integration**: Startup/shutdown lifecycle, dependency injection
+   - Conversations survive server restarts!
+
+7. **Testing**
+   - **77 tests passing** ✅
    - Unit tests for models (14 tests)
    - Unit tests for memory system (19 tests)
+   - Unit tests for storage models (6 tests)
    - Integration tests for conversation service (11 tests)
+   - Integration tests for repository (23 tests)
    - Integration tests for API (4 tests)
-   - Mock providers for testing without API calls
+   - Mock providers and repositories for testing
    - pytest with async support
 
 ### Known Issues / Technical Debt
@@ -136,8 +150,9 @@ ai-playground/
 1. **Deprecation Warnings**:
    - Pydantic `Config` class (should migrate to `ConfigDict`)
    - FastAPI `on_event` (should migrate to lifespan handlers)
-2. **Model Name**: Currently using `claude-sonnet-4-5` (works with current API key)
-3. **Memory Persistence**: Phase 2 memory is in-RAM only (lost on restart) - Phase 3 will add database
+   - `datetime.utcnow()` (should use `datetime.now(datetime.UTC)`)
+2. **Model Name**: Currently using `claude-sonnet-4-6` (updated in .env)
+3. **RAM-Database Sync**: Currently no loading from DB to RAM on startup (Phase 3 enhancement)
 
 ### Environment Configuration
 
@@ -145,10 +160,11 @@ ai-playground/
 ```bash
 PROVIDER_TYPE=anthropic
 ANTHROPIC_API_KEY=sk-ant-api03-...  # User has valid key
-DEFAULT_MODEL=claude-sonnet-4-5      # Current working model
+DEFAULT_MODEL=claude-sonnet-4-6      # Current working model
 DEFAULT_TEMPERATURE=0.7
 DEFAULT_MAX_TOKENS=1000
 API_PORT=8000
+DATABASE_URL=sqlite+aiosqlite:///./chatbot.db  # Phase 3
 ```
 
 ---
@@ -169,6 +185,11 @@ poetry run pytest
 
 # Run tests with verbose output
 poetry run pytest -v
+
+# Database migrations (Phase 3+)
+poetry run alembic upgrade head  # Apply migrations
+poetry run alembic revision --autogenerate -m "Description"  # Create migration
+poetry run alembic downgrade -1  # Rollback one migration
 ```
 
 ### Before Starting New Phase
@@ -211,14 +232,34 @@ poetry run pytest -v
 - CLI enhanced with conversation memory awareness
 - All 48 tests passing ✅
 
-### 🔜 Phase 3: Persistent Storage (NEXT)
+### ✅ Phase 3: Persistent Storage (COMPLETE)
 - SQLAlchemy 2.0 async ORM
 - SQLite database (local development)
 - Repository pattern for data access
 - Save/retrieve conversation history
 - Alembic migrations
+- Two-tier memory architecture (RAM + Database)
+- Connection pooling and async sessions
+- FastAPI lifecycle integration
 
-### Phase 4: Semantic Memory
+**Key Files Created**:
+- `src/chatbot/storage/models.py` - ORM models (Conversation, Message)
+- `src/chatbot/storage/database.py` - DatabaseManager with connection pooling
+- `src/chatbot/storage/repositories/conversation.py` - Repository pattern implementation
+- `alembic/` - Database migrations directory
+- `alembic.ini` - Alembic configuration
+- `tests/unit/test_storage_models.py` - Unit tests for ORM (6 tests)
+- `tests/integration/test_repository.py` - Repository integration tests (23 tests)
+
+**What Changed**:
+- `ConversationService.send_message()` now accepts optional `repository` parameter
+- Messages saved to both RAM (MemoryManager) and Database (Repository)
+- FastAPI startup event initializes database
+- FastAPI shutdown event closes database connections
+- All 77 tests passing ✅
+- Conversations now survive server restarts!
+
+### 🔜 Phase 4: Semantic Memory (NEXT)
 - ChromaDB vector database integration
 - Embedding generation for messages
 - Semantic search across conversations
@@ -240,37 +281,39 @@ poetry run pytest -v
 
 ---
 
-## Phase 3 Preview: Persistent Storage
+## Phase 4 Preview: Semantic Memory
 
 ### What We'll Build
 
-In Phase 3, we'll make conversations survive server restarts by adding database persistence.
+In Phase 4, we'll add **intelligent context retrieval** using vector embeddings and semantic search.
 
 **Key Components to Create:**
-- `src/chatbot/storage/models.py` - SQLAlchemy ORM models
-- `src/chatbot/storage/repositories/conversation.py` - Repository pattern
-- `src/chatbot/storage/database.py` - Database connection management
-- Database migrations with Alembic
+- `src/chatbot/memory/semantic.py` - SemanticMemory with ChromaDB
+- `src/chatbot/embedding/` - Embedding generation (using Claude or OpenAI)
+- Integration with ChromaDB vector database
+- Semantic search across all conversations
 
 **Concepts to Learn:**
-- SQLAlchemy 2.0 async ORM
-- Repository pattern for data access
-- Database migrations
-- Async database sessions
-- SQLite for development, PostgreSQL-ready
+- Vector embeddings (turning text into numbers)
+- Cosine similarity (measuring semantic similarity)
+- ChromaDB for vector storage
+- Embedding models (Claude, OpenAI, or local models)
+- RAG (Retrieval-Augmented Generation)
 
 **Architecture Changes:**
 ```
-Current: ConversationService → MemoryManager → ShortTermMemory (RAM)
+Current: User message → Recent history (RAM) → AI
 
-Phase 3: ConversationService → MemoryManager → ShortTermMemory (RAM)
-                                              ↓
-                                      ConversationRepository → Database (Disk)
+Phase 4: User message → Recent history (RAM)
+                     → Semantic search (find similar past conversations)
+                     → Combined context → AI
 ```
 
-Memory becomes **two-tier**:
-1. **ShortTermMemory**: Fast in-RAM cache for recent messages
-2. **Database**: Permanent storage for all history
+**Use Cases:**
+- "We talked about this before" - find related past conversations
+- "Similar to when I asked about..." - discover patterns
+- Better context from entire conversation history
+- Cross-session knowledge discovery
 
 ---
 
@@ -358,26 +401,26 @@ Memory becomes **two-tier**:
 4. **Keep detailed comments** - code should be self-documenting
 5. **Update TEXTBOOK.md** after each phase with new concepts
 6. **Use TodoWrite** to track multi-step tasks
-7. **Model name**: `claude-sonnet-4-5` works with user's API key
+7. **Model name**: `claude-sonnet-4-6` works with user's API key
 
 ---
 
 ## Questions to Ask When Resuming
 
-If starting Phase 3:
-1. "Ready to start Phase 3 (Persistent Storage)?"
-2. "Any questions about Phase 2 concepts before we continue?"
-3. "Would you like me to explain SQLAlchemy async patterns before we implement?"
+If starting Phase 4:
+1. "Ready to start Phase 4 (Semantic Memory with vector embeddings)?"
+2. "Any questions about Phase 3 concepts before we continue?"
+3. "Would you like me to explain vector embeddings and ChromaDB before we implement?"
 
-If user asks to modify Phase 1 or Phase 2:
+If user asks to modify Phase 1, 2, or 3:
 1. "What would you like to change or improve?"
 2. "Any concepts from TEXTBOOK.md you'd like me to clarify?"
 
-If user wants to test Phase 2:
+If user wants to test Phase 3:
 1. "Start API: `poetry run uvicorn chatbot.main:app --reload`"
 2. "Start CLI: `poetry run python -m cli.main`"
-3. "Try a multi-turn conversation to see memory in action!"
-4. "Use `/new` to start fresh, `/stats` to see token usage"
+3. "Try having a conversation, restart the server, and see history is preserved!"
+4. "Check database: `poetry run sqlite3 chatbot.db \"SELECT * FROM conversations;\"`"
 
 ---
 
@@ -387,7 +430,9 @@ If user wants to test Phase 2:
 - **FastAPI Docs**: https://fastapi.tiangolo.com/
 - **Pydantic Docs**: https://docs.pydantic.dev/
 - **Poetry Docs**: https://python-poetry.org/docs/
+- **SQLAlchemy Docs**: https://docs.sqlalchemy.org/en/20/
+- **Alembic Docs**: https://alembic.sqlalchemy.org/
 
 ---
 
-*Last Updated: Phase 2 Complete - 2026-03-13*
+*Last Updated: Phase 3 Complete - 2026-03-31*

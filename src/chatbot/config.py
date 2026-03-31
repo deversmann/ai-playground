@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # ============================================================================
 
     default_model: str = Field(
-        default="claude-3-5-sonnet-20241022",
+        default="claude-haiku-4-5",
         description="Default AI model to use"
     )
 

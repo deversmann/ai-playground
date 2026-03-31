@@ -28,7 +28,7 @@ def test_root_endpoint(client):
     data = response.json()
     assert "message" in data
     assert "version" in data
-    assert data["version"] == "0.1.0"
+    assert data["version"] == "0.3.0"  # Phase 3
 
 
 def test_health_endpoint(client):
@@ -45,8 +45,10 @@ def test_health_endpoint(client):
 def test_chat_endpoint_with_mock(mock_provider):
     """Test the chat endpoint with a mocked conversation service."""
     # Create a fresh test client
-    from chatbot.api.dependencies import get_conversation_service
+    from chatbot.api.dependencies import get_conversation_repository, get_conversation_service
+    from chatbot.storage.repositories import ConversationRepository
     from fastapi.testclient import TestClient
+    from unittest.mock import AsyncMock
 
     # Create a mock conversation service with the mock provider
     memory_manager = MemoryManager()
@@ -55,8 +57,13 @@ def test_chat_endpoint_with_mock(mock_provider):
         memory_manager=memory_manager,
     )
 
-    # Override the dependency
+    # Create a mock repository (Phase 3)
+    mock_repo = AsyncMock(spec=ConversationRepository)
+    mock_repo.add_message = AsyncMock()
+
+    # Override the dependencies
     app.dependency_overrides[get_conversation_service] = lambda: mock_service
+    app.dependency_overrides[get_conversation_repository] = lambda: mock_repo
 
     try:
         client = TestClient(app)
@@ -84,28 +91,46 @@ def test_chat_endpoint_with_mock(mock_provider):
         app.dependency_overrides.clear()
 
 
-def test_chat_endpoint_validation_errors(client):
+def test_chat_endpoint_validation_errors():
     """Test that the chat endpoint validates request data."""
-    # Missing required fields
-    response = client.post("/chat/send", json={})
-    assert response.status_code == 422  # Validation error
+    from chatbot.api.dependencies import get_conversation_repository
+    from chatbot.storage.repositories import ConversationRepository
+    from fastapi.testclient import TestClient
+    from unittest.mock import AsyncMock
 
-    # Empty message
-    response = client.post(
-        "/chat/send", json={"message": "", "session_id": "test"}
-    )
-    assert response.status_code == 422
+    # Create a mock repository (Phase 3)
+    mock_repo = AsyncMock(spec=ConversationRepository)
 
-    # Invalid temperature
-    response = client.post(
-        "/chat/send",
-        json={"message": "test", "session_id": "test", "temperature": 5.0},
-    )
-    assert response.status_code == 422
+    # Override the repository dependency
+    app.dependency_overrides[get_conversation_repository] = lambda: mock_repo
 
-    # Invalid max_tokens
-    response = client.post(
-        "/chat/send",
-        json={"message": "test", "session_id": "test", "max_tokens": -1},
-    )
-    assert response.status_code == 422
+    try:
+        client = TestClient(app)
+
+        # Missing required fields
+        response = client.post("/chat/send", json={})
+        assert response.status_code == 422  # Validation error
+
+        # Empty message
+        response = client.post(
+            "/chat/send", json={"message": "", "session_id": "test"}
+        )
+        assert response.status_code == 422
+
+        # Invalid temperature
+        response = client.post(
+            "/chat/send",
+            json={"message": "test", "session_id": "test", "temperature": 5.0},
+        )
+        assert response.status_code == 422
+
+        # Invalid max_tokens
+        response = client.post(
+            "/chat/send",
+            json={"message": "test", "session_id": "test", "max_tokens": -1},
+        )
+        assert response.status_code == 422
+
+    finally:
+        # Clean up the override
+        app.dependency_overrides.clear()

@@ -27,6 +27,13 @@ from typing import Optional
 from chatbot.memory import MemoryManager
 from chatbot.providers import AIProvider, ChatMessage, ChatResponse
 
+# Conditional import - Phase 3+
+# Repository is optional for backward compatibility with Phase 2
+try:
+    from chatbot.storage import ConversationRepository
+except ImportError:
+    ConversationRepository = None  # type: ignore
+
 
 class ConversationService:
     """
@@ -80,6 +87,7 @@ class ConversationService:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         system_prompt: Optional[str] = None,
+        repository: Optional["ConversationRepository"] = None,
     ) -> ChatResponse:
         """
         Send a message and get a response with full conversation context.
@@ -90,7 +98,8 @@ class ConversationService:
         3. Adds the user's new message
         4. Sends full conversation to AI provider
         5. Stores the AI's response in memory
-        6. Returns the response
+        6. Persists to database (if repository provided - Phase 3+)
+        7. Returns the response
 
         Args:
             session_id: Unique identifier for this conversation
@@ -98,6 +107,7 @@ class ConversationService:
             temperature: Response randomness (0.0-1.0), None uses provider default
             max_tokens: Max response tokens, None uses provider default
             system_prompt: Optional system instructions for the AI
+            repository: Optional ConversationRepository for persistence (Phase 3+)
 
         Returns:
             ChatResponse from the AI provider
@@ -106,26 +116,34 @@ class ConversationService:
             Exception: If AI provider fails (network, auth, rate limit, etc.)
 
         Example:
+            >>> # Phase 2: In-memory only
             >>> response = await service.send_message(
             ...     session_id="user-123-conv-1",
             ...     user_message="Explain async/await in Python",
             ...     temperature=0.7,
-            ...     system_prompt="You are a helpful Python tutor."
             ... )
-            >>> print(response.content)
+            >>>
+            >>> # Phase 3: With database persistence
+            >>> response = await service.send_message(
+            ...     session_id="user-123-conv-1",
+            ...     user_message="Explain async/await in Python",
+            ...     repository=conversation_repo,  # Persists to database
+            ... )
 
-        Note on Context Management:
-            The conversation history is automatically managed:
-            - Retrieved from memory before each request
-            - New messages added after receiving response
-            - Old messages automatically dropped when exceeding max_messages
+        Note on Two-Tier Memory (Phase 3+):
+            When a repository is provided, messages are stored in both:
+            - RAM (MemoryManager): Fast, recent messages for context
+            - Database (Repository): Permanent, all messages for history
+
+            This hybrid approach provides:
+            - Speed: In-memory access for active conversations
+            - Persistence: Survives server restarts
+            - Scalability: Can offload old messages from RAM
 
         Note on System Prompts:
             System prompts are NOT stored in conversation history. They're
             included with each request but don't count as conversation messages.
             This is intentional - system prompts are instructions, not conversation.
-
-            In Phase 3, we might add persistent system prompts per session.
         """
         # 1. Get conversation history for this session
         history = await self.memory_manager.get_messages(session_id)
@@ -159,17 +177,35 @@ class ConversationService:
             max_tokens=max_tokens,
         )
 
-        # 4. Store the user message in memory
+        # 4. Store the user message in memory (RAM - fast)
         await self.memory_manager.add_message(session_id, user_msg)
 
-        # 5. Store the AI response in memory
+        # 5. Store the AI response in memory (RAM - fast)
         assistant_msg = ChatMessage(
             role="assistant",
             content=ai_response.content,
         )
         await self.memory_manager.add_message(session_id, assistant_msg)
 
-        # 6. Return the response
+        # 6. Persist to database (Phase 3+) - permanent storage
+        if repository is not None:
+            # Save user message to database
+            await repository.add_message(
+                session_id=session_id,
+                role=user_msg.role,
+                content=user_msg.content,
+            )
+
+            # Save AI response to database
+            await repository.add_message(
+                session_id=session_id,
+                role=assistant_msg.role,
+                content=assistant_msg.content,
+            )
+            # Note: Repository commits happen automatically via FastAPI's
+            # database session dependency (async context manager)
+
+        # 7. Return the response
         return ai_response
 
     async def get_conversation_history(
